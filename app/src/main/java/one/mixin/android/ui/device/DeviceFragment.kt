@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import com.google.zxing.integration.android.IntentIntegrator
 import kotlinx.android.synthetic.main.fragment_device.*
+import kotlinx.android.synthetic.main.view_title.view.*
 import one.mixin.android.R
 import one.mixin.android.crypto.*
 import one.mixin.android.extension.hexStringToByteArray
@@ -21,7 +22,12 @@ import one.mixin.android.util.Session
 import org.jetbrains.anko.doAsync
 import org.whispersystems.libsignal.ecc.Curve
 
-class DeviceActivityFragment : Fragment() {
+class DeviceFragment : Fragment() {
+    companion object {
+        const val TAG = "DeviceFragment"
+
+        fun newInstance() = DeviceFragment()
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -33,7 +39,8 @@ class DeviceActivityFragment : Fragment() {
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         super.onActivityCreated(savedInstanceState)
-        button.setOnClickListener {
+        title_view.left_ib.setOnClickListener { activity?.onBackPressed() }
+        auth_tv.setOnClickListener{
             val intentIntegrator = IntentIntegrator(activity)
             intentIntegrator.captureActivity = CaptureActivity::class.java
             intentIntegrator.setBeepEnabled(false)

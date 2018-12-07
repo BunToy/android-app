@@ -3,31 +3,38 @@ package one.mixin.android.ui.device
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.fragment.app.Fragment
 import android.os.Bundle
 import android.text.TextUtils
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import com.google.zxing.integration.android.IntentIntegrator
+import io.reactivex.android.schedulers.AndroidSchedulers
+import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.fragment_device.*
 import kotlinx.android.synthetic.main.view_title.view.*
 import one.mixin.android.R
+import one.mixin.android.api.request.ProvisioningRequest
+import one.mixin.android.api.service.ProvisioningService
 import one.mixin.android.crypto.*
-import one.mixin.android.extension.hexStringToByteArray
+import one.mixin.android.crypto.Base64
+import one.mixin.android.ui.common.BaseFragment
 import one.mixin.android.ui.qr.CaptureActivity
 import one.mixin.android.ui.qr.CaptureFragment
 import one.mixin.android.util.Session
 import org.jetbrains.anko.doAsync
 import org.whispersystems.libsignal.ecc.Curve
+import javax.inject.Inject
 
-class DeviceFragment : Fragment() {
+class DeviceFragment : BaseFragment() {
     companion object {
         const val TAG = "DeviceFragment"
 
         fun newInstance() = DeviceFragment()
     }
+
+    @Inject
+    lateinit var provisioningService: ProvisioningService
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -40,7 +47,7 @@ class DeviceFragment : Fragment() {
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         super.onActivityCreated(savedInstanceState)
         title_view.left_ib.setOnClickListener { activity?.onBackPressed() }
-        auth_tv.setOnClickListener{
+        auth_tv.setOnClickListener {
             val intentIntegrator = IntentIntegrator(activity)
             intentIntegrator.captureActivity = CaptureActivity::class.java
             intentIntegrator.setBeepEnabled(false)
@@ -53,32 +60,41 @@ class DeviceFragment : Fragment() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == IntentIntegrator.REQUEST_CODE && resultCode == CaptureFragment.RESULT_CODE) {
             val url = data?.getStringExtra(CaptureFragment.ARGS_ADDRESS_RESULT)
-            Log.e("hello", url)
-            doAsync {
-                encryptKey(requireContext(), url)
+            url?.let {
+                provisioningService.provisionCode().subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread()).subscribe({ provisioningCode ->
+                    if (provisioningCode.isSuccess && provisioningCode != null) {
+                        doAsync {
+                            encryptKey(requireContext(), url, provisioningCode.data!!.code)
+                        }
+                    }
+                }, {
+                })
             }
         }
     }
 
-    private fun encryptKey(ctx: Context, url: String?) {
-        val verificationCode = "hello"
+    private fun encryptKey(ctx: Context, url: String, verificationCode: String) {
+        val account = Session.getAccount() ?: return
         val uri = Uri.parse(url)
+        if (uri.scheme != "mixin") {
+            return
+        }
         val ephemeralId = uri.getQueryParameter("uuid")
-        val deviceKey = uri.getQueryParameter("pub_key")
+        val publicKeyEncoded = uri.getQueryParameter("pub_key")
 
-        if (TextUtils.isEmpty(ephemeralId) || TextUtils.isEmpty(deviceKey)) {
+        if (TextUtils.isEmpty(ephemeralId) || TextUtils.isEmpty(publicKeyEncoded)) {
             return
         }
 
-        val publicKey = Curve.decodePoint(deviceKey.hexStringToByteArray(), 0)
+        val publicKey = Curve.decodePoint(Base64.decode(publicKeyEncoded), 0)
         val identityKeyPair = IdentityKeyUtil.getIdentityKeyPair(ctx)
         val profileKey = ProfileKeyUtil.getProfileKey(ctx)
-        val userId = Session.getAccountId()!!
-
         val cipher = ProvisioningCipher(publicKey)
-        val message = ProvisionMessage(identityKeyPair.publicKey.serialize(), identityKeyPair.privateKey.serialize(), userId, verificationCode, profileKey)
+        val message = ProvisionMessage(identityKeyPair.publicKey.serialize(), identityKeyPair.privateKey.serialize(), account.userId, account.session_id, verificationCode, profileKey)
         val ciphertext = cipher.encrypt(message)
-
-        Log.e("hello", Base64.encodeBytes(ciphertext))
+        val encoded = Base64.encodeBytes(ciphertext)
+        provisioningService.updateProvisioning(ephemeralId, ProvisioningRequest(encoded)).subscribe({
+        }, {
+        })
     }
 }
